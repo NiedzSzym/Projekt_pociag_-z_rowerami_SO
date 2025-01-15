@@ -12,35 +12,25 @@
 #include <time.h>
 #include "Funkcje.h"
 
-#define MAX_AMOUNT_OF_PASSENGERS 15 //maksymalna liczba pasazerow w jednej fali
-#define MIN_AMOUNT_OF_PASSENGERS 1 //minimalna liczba pasazerow w jednej fali
+#define FILE_ID 1;
 
-void generate_passenger() {
-  pid_t pid = fork();
-     if (pid < 0) {
-        perror("Błąd podczas tworzenia procesu:");
-        exit(EXIT_FAILURE);
-    } else if (pid == 0) { // Proces dziecka
-        printf("Pasazer o pid: %d\n", getpid());
-        execlp("./pasazer", "pasazer", NULL);
-        perror("execlp");
-        exit(EXIT_FAILURE);
+int sem_psg_num_id; //semafor określa aktualną liczbe pasażerów na peronie
 
-    }
+void cleanup(int signum) {
+    semctl(sem_psg_num_id, 0, IPC_RMID);
+    exit(0);
 }
 
 int main() {
-  srand(time(NULL));
-  int delay = rand() % 10;
-  while (1) {
-    sleep(delay);
-    int wave;
-    wave = rand() % (MAX_AMOUNT_OF_PASSENGERS - MIN_AMOUNT_OF_PASSENGERS + 1) + MIN_AMOUNT_OF_PASSENGERS;
-    printf("%d\n", wave);
-    for (int i = 0; i < wave; i++) {
-      generate_passenger();
+    int sem_num;
+    signal(SIGINT, cleanup);
+    sem_psg_num_id = passenger_num_semaphor();
+
+    while(1) {
+        sleep(3);
+        sem_num = semctl(sem_psg_num_id, 0, GETVAL, 0);
+        printf("%d\n", sem_num);
     }
-  }
 }
 
 
