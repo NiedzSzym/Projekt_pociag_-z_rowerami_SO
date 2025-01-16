@@ -25,7 +25,6 @@ void generate_passenger() {
         execlp("./Pasazer", "Pasazer", NULL);
         perror("execlp");
         exit(EXIT_FAILURE);
-
     }
 
 }
@@ -52,13 +51,13 @@ void cleanup(int signum) {
     pid_t pgid = getpgid(0); // Pobiera PGID bieżącego procesu
     if (pgid == -1) {
         perror("getpgid");
-        return 1;
+        exit(EXIT_FAILURE);
     }
 
     // Wysyłanie sygnału SIGTERM do całej grupy procesów
     if (kill(-pgid, SIGINT) == -1) {
         perror("kill");
-        return 1;
+        exit(EXIT_FAILURE);
     }
 }
 
