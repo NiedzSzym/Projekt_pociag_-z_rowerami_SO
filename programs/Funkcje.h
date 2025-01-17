@@ -19,11 +19,12 @@
 #define RETURN_TIME 10 //czas powrotu pociagu na stacje w sekundach
 #define SMP_PASSENGERS_NUMBER_ID 11
 #define MSG_QUE_TRAINS 21
+#define SMP_TRAIN_ENTRIES_ID 31
 
 
 
 typedef struct {
-    int train_status;
+    int train_status; // 1 - na peronie, 0 - czeka na stacji, 2 - w drodze
     int train_id;
     pid_t train_conductor_PID;
 } train;
@@ -34,6 +35,8 @@ typedef struct {
 } train_msg;
 
 int passenger_num_semaphor() {
+    train_msg msg;
+
 	key_t key = ftok("/tmp", SMP_PASSENGERS_NUMBER_ID);
 	if (key == -1) {
 	    perror("ftok");
@@ -43,6 +46,22 @@ int passenger_num_semaphor() {
 	int sem_id = semget(key, 1, IPC_CREAT | 0622);
   	if (sem_id == -1) {
 	    perror("semget_passenger_number");
+    	exit(EXIT_FAILURE);
+  	}
+
+  	return sem_id;
+}
+
+int entries_semaphors() {
+	key_t key = ftok("/tmp", SMP_TRAIN_ENTRIES_ID);
+	if (key == -1) {
+	    perror("ftok");
+		exit(EXIT_FAILURE);
+  	}
+
+	int sem_id = semget(key, 2, IPC_CREAT | 0622);
+  	if (sem_id == -1) {
+	    perror("semget_train_entries");
     	exit(EXIT_FAILURE);
   	}
 

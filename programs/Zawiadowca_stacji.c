@@ -23,19 +23,29 @@ int train_que_id;
 void cleanup(int signum) {
     semctl(sem_psg_num_id, 0, IPC_RMID);
     msgctl(train_que_id, IPC_RMID, NULL);
+    if ( msgctl(train_que_id,IPC_RMID,0)==-1 )
+      		{
+        	perror("train_que");
+        	exit(EXIT_FAILURE);
+      		}
+
     exit(0);
 }
 
-//void call_train() {}
-//
-//void check_for_passengers() {
-//    sem_psg_num_id = passenger_num_semaphor();
-//    while (1) {
-//        if (semctl(sem_psg_num_id, 0, GETVAL, 0) && track_status) {
-//            call_train();
-//        }
-//    }
-//}
+void call_train() {
+    train_msg msg;
+
+    if (msgrcv(train_que_id, &msg, sizeof(msg.train), msg.mtype, 0) == -1) {
+            perror("Blad odbioru komunikatu z kolejki");
+            exit(EXIT_FAILURE);
+    }
+    printf("Odebrano wiadomość:\n");
+    printf("  Train ID: %d\n", msg.train.train_id);
+    printf("  Train Status: %d\n", msg.train.train_status);
+    printf("  Train Conductor PID: %d\n", msg.train.train_conductor_PID);
+    kill(msg.train.train_conductor_PID, SIGUSR1);
+
+}
 
 void setup_trains(int number) {
     int i;
@@ -79,7 +89,9 @@ int main() {
     sem_psg_num_id = passenger_num_semaphor();
     train_que_id = get_trains_que();
     setup_trains(5);
+    call_train();
     sleep(20);
+    cleanup(0);
 
 //    pthread_t check_for_passengers_thread;
 //    if (pthread_create(&check_for_passengers_thread, NULL, check_for_passengers, NULL) != 0) {
