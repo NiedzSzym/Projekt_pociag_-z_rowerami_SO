@@ -13,13 +13,14 @@
 #include <sys/time.h>
 
 #define TRAIN_AMOUNT 3 //liczba pociagow na stacji
-#define BIKE_SEATS 10 //liczba miejsc dla pasazerow z rowerem
-#define BAGGAGE_SEATS 10 //liczba miejsc dla pasazerow z bagazem
-#define STOP_TIME 10 //czas postoju w sekundach
-#define RETURN_TIME 10 //czas powrotu pociagu na stacje w sekundach
+#define BIKE_SPACES 10 //liczba miejsc na rowery
+#define SEATS 10 //liczba miejsc dla pasazerow z bagazem
+#define STOP_TIME 3 //czas postoju w sekundach
+#define RETURN_TIME 4 //czas powrotu pociagu na stacje w sekundach
 #define SMP_STATION_ID 11
 #define SMP_TRAIN_ENTRIES_ID 12
 #define SMP_TRACK_STATUS_ID 13
+#define SMP_READ_WRITE_ID 14
 #define MSG_QUE_TRAINS_ID 21
 #define MSG_QUE_COMMUNICATION_ID 22
 #define SHM_TRAINS_ID 31
@@ -55,30 +56,35 @@ typedef struct {
     int signal; //1 - odjazd, 0 - podjazd, 2 - otrzymano wiadomosc
 } communication;
 
+
+int get_read_write_stationshm_smp() {
+    key_t key = ftok("/tmp", SMP_READ_WRITE_ID);
+	if (key == -1) {
+	    perror("ftok");
+		exit(EXIT_FAILURE);
+  	}
+    int sem_id = semget(key, 2, IPC_CREAT | 0622);
+  	if (sem_id == -1) {
+	    perror("semget_read_write_stationshm_smp");
+    	exit(EXIT_FAILURE);
+  	}
+    if (semctl(sem_id, 0, SETVAL, 1) == -1) {
+        perror("semctl SETVAL failed");
+        exit(EXIT_FAILURE);
+    }
+    if (semctl(sem_id, 1, SETVAL, 1) == -1) {
+        perror("semctl SETVAL failed");
+        exit(EXIT_FAILURE);
+    }
+
+    return sem_id;
+}
+
 void remove_semaphore(int sem_id) {
     if (semctl(sem_id, 0, IPC_RMID) == -1) {
         perror("semctl IPC_RMID failed");
         exit(EXIT_FAILURE);
     }
-}
-
-int station_semaphore(int initial_value) {
-   key_t key = ftok("/tmp", SMP_STATION_ID);
-	if (key == -1) {
-	    perror("ftok");
-		exit(EXIT_FAILURE);
-  	}
-    int sem_id = semget(key, 1, IPC_CREAT | 0622);
-  	if (sem_id == -1) {
-	    perror("semget_train_entries");
-    	exit(EXIT_FAILURE);
-  	}
-    if (semctl(sem_id, 0, SETVAL, initial_value) == -1) {
-        perror("semctl SETVAL failed");
-        exit(EXIT_FAILURE);
-    }
-    return sem_id;
-
 }
 
 
@@ -122,7 +128,7 @@ int track_status_semaphor() {
   	return sem_id;
 }
 
-void semaphor_lock(int sem_id, int sem_num) {
+void semaphore_lock(int sem_id, int sem_num) {
   	struct sembuf buffer = {sem_num, -1, 0};
   	if (semop(sem_id, &buffer, 1) == -1) {
 	    perror("semop");
@@ -130,7 +136,7 @@ void semaphor_lock(int sem_id, int sem_num) {
   	}
 }
 
-void semaphor_unlock(int sem_id, int sem_num) {
+void semaphore_unlock(int sem_id, int sem_num) {
   	struct sembuf buffer = {sem_num, 1, 0};
   	if (semop(sem_id, &buffer, 1) == -1) {
 	    perror("semop");

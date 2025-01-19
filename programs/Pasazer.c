@@ -21,9 +21,11 @@ typedef struct{
 } passenger;
 
 station *station_shm;
-int station_shm_id;
-int station_smp_id;
+int station_shm_id;//Pamiec dzielona przechowujaca aktualne informacje o stacji
 int entries_smp_id;
+int read_write_smp_id;//semafory do rozwiazania problemu pisania i czytania station_shm->passengers_waiting
+#define SP 0
+#define W 1
 
 int random_type() {
     static int initialized = 0;
@@ -41,13 +43,15 @@ int main() {
 
     station_shm_id = get_station_shm();
     station_shm = attach_station(station_shm_id);
-    station_smp_id = station_semaphore(1);
-    entries_smp_id = entries_semaphores(1);
+    //entries_smp_id = entries_semaphores(1);
+
+    read_write_smp_id = get_read_write_stationshm_smp();
 
     //inkrementowanie liczby pasazerow na stacji
-    semaphor_lock(station_smp_id, 0);
+    semaphore_lock(read_write_smp_id, SP);
     station_shm->passengers_waiting++;
-    semaphor_unlock(station_smp_id, 0);
+    semaphore_unlock(read_write_smp_id, SP);
+
     //printf("%d\n", station_shm->passengers_waiting);
 
 

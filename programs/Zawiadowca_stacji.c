@@ -16,6 +16,9 @@
 #define MAX_AMOUNT_OF_PASSENGERS 15 //maksymalna liczba pasazerow w jednej fali
 #define MIN_AMOUNT_OF_PASSENGERS 1 //minimalna liczba pasazerow w jednej fali
 
+int read_write_smp_id;//semafory do rozwiazania problemu pisania i czytania station_shm->passengers_waiting
+#define SP 0
+#define W 1
 
 int train_que_id;
 int trains_shm_id;
@@ -24,6 +27,7 @@ int station_shm_id;
 
 int communication_que_id;
 int station_smp_id;
+int stop_thread = 0;
 
 train *trains_shm;
 station *station_shm;
@@ -41,22 +45,21 @@ void generate_passenger() {
 
 }
 
-void * waves_generator() {
-    while (1) {
+void *waves_generator() {
+    while (!stop_thread) {
         int delay = rand() % 10;
-        while (1) {
-            sleep(delay);
-            int wave;
-            wave = rand() % (MAX_AMOUNT_OF_PASSENGERS - MIN_AMOUNT_OF_PASSENGERS + 1) + MIN_AMOUNT_OF_PASSENGERS;
-            //printf("%d\n", wave);
-            for (int i = 0; i < wave; i++) {
-                usleep(50000);
-                generate_passenger();
-            }
+        sleep(delay);
+        if (stop_thread) break; // Dodaj dodatkowe sprawdzenie tutaj
+
+        int wave = rand() % (MAX_AMOUNT_OF_PASSENGERS - MIN_AMOUNT_OF_PASSENGERS + 1) + MIN_AMOUNT_OF_PASSENGERS;
+        for (int i = 0; i < wave; i++) {
+            if (stop_thread) break; // Dodaj sprawdzenie w pętli for
+            usleep(50000);
+            generate_passenger();
         }
     }
-
 }
+
 
 void cleanup(int signum) {
 
@@ -70,7 +73,8 @@ void cleanup(int signum) {
         perror("communication_que");
         exit(EXIT_FAILURE);
     }
-    remove_semaphore(station_smp_id);
+
+    remove_semaphore(read_write_smp_id);
 	detach_trains_shm(trains_shm_id, trains_shm);
     detach_station_shm(station_shm_id, station_shm);
 
@@ -79,23 +83,30 @@ void cleanup(int signum) {
 
 void rcv_message_from_conductor() {
     communication msg;
-    if (msgrcv(communication_que_id, &msg, sizeof(msg.sender) + sizeof(msg.signal), 1, 0) == -1) {
-        perror("msgrcv failed_zawiadowca");
-        exit(EXIT_FAILURE);
+    while (1) {
+        if (msgrcv(communication_que_id, &msg, sizeof(msg.sender) + sizeof(msg.signal), 1, 0) == -1) {
+            if (errno == EINTR) {
+                // Jeśli wywołanie systemowe zostało przerwane przez sygnał, ponów próbę
+                continue;
+            } else {
+                perror("msgrcv failed_zawiadowca");
+                exit(EXIT_FAILURE);
+            }
+        }
+        break; // Pomyślne odebranie wiadomości, wyjdź z pętli
     }
 
-    if (msg.signal == 2) {
-    	printf("Zawiadowca stacji otrzymal wiadomosc zwrotna od konduktora o numerze PID: %d\n",msg.sender);
-    }
-    else if (msg.signal == 1) {
-    	printf("Zawiadowca stacji otrzymal wiadomosc o odjezdzie od konduktora o numerze PID: %d\n",msg.sender);
-    }
-    else {
-    	printf("Nastapil blad komunikacji");
-        cleanup(0);
-        exit(EXIT_FAILURE);
-    }
+//    if (msg.signal == 2) {
+//        printf("Zawiadowca stacji otrzymal wiadomosc zwrotna od konduktora o numerze PID: %d\n", msg.sender);
+//    } else if (msg.signal == 1) {
+//        printf("Zawiadowca stacji otrzymal wiadomosc o odjezdzie od konduktora o numerze PID: %d\n", msg.sender);
+//    } else {
+//        printf("Nastapil blad komunikacji");
+//        cleanup(0);
+//        exit(EXIT_FAILURE);
+//    }
 }
+
 
 
 void send_message_to_conductor(int signal) {
@@ -107,23 +118,25 @@ void send_message_to_conductor(int signal) {
         perror("msgsnd failed_zawiadowca");
         exit(EXIT_FAILURE);
     }
-	if (signal == 1) {
-    	printf("Zawiadowca wysłał wiadomość do kierownika pociągu %d (PID: %d), komunikat: ODJAZD\n", station_shm->current_train.train_id, station_shm->current_train.train_conductor_PID);
-    }
-    if (signal == 0) {
-      	printf("Zawiadowca wysłał wiadomość do kierownika pociągu %d (PID: %d), komunikat: PODJAZD\n", station_shm->current_train.train_id, station_shm->current_train.train_conductor_PID);
-    }
+//	if (signal == 1) {
+//    	printf("Zawiadowca wysłał wiadomość do kierownika pociągu %d (PID: %d), komunikat: ODJAZD\n", station_shm->current_train.train_id, station_shm->current_train.train_conductor_PID);
+//    }
+//    if (signal == 0) {
+//      	printf("Zawiadowca wysłał wiadomość do kierownika pociągu %d (PID: %d), komunikat: PODJAZD\n", station_shm->current_train.train_id, station_shm->current_train.train_conductor_PID);
+//    }
 }
 
 void call_train() {
+    //printf("train started\n");
     train_msg msg;
+    msg.mtype = 1;
     if (msgrcv(train_que_id, &msg, sizeof(msg.train), msg.mtype, 0) == -1) {
             perror("Blad odbioru komunikatu z kolejki");
             exit(EXIT_FAILURE);
     }
+    //printf("train received message %ld\n", msg.mtype);
 
     station_shm->current_train = msg.train;
-    printf("%d\n", station_shm->current_train.train_id);
     send_message_to_conductor(0);
     rcv_message_from_conductor();
     printf("KOMUNIKAT: Na peron wjedzie pociag numer %d\n", msg.train.train_id);
@@ -161,8 +174,6 @@ void setup_trains(int number) {
 
         new_train.train_conductor_PID = pid_conductor;
 
-
-
         trains_shm[i].train_id = new_train.train_id;
         trains_shm[i].train_status = new_train.train_status;
         trains_shm[i].train_conductor_PID = new_train.train_conductor_PID;
@@ -196,15 +207,31 @@ void IPC_setup() {
     station_shm_id = get_station_shm();
     station_shm = attach_station(station_shm_id);
 
-    station_smp_id = station_semaphore(1);
+    //semafory do rozwiazania problemu pisania i czytania w station_shm->passengers_waiting
+    read_write_smp_id = get_read_write_stationshm_smp();
+
 }
 
 void SIGUSR1_handler() {
 	printf("SIGUSR1\n");
+
 }
 
 void SIGUSR2_handler() {
 	printf("SIGUSR2\n");
+    stop_thread = 1;
+}
+
+int check_for_passengers() {
+    int result = 0;
+    semaphore_lock(read_write_smp_id, W);
+    semaphore_lock(read_write_smp_id, SP);
+    semaphore_unlock(read_write_smp_id, W);
+    if (station_shm->passengers_waiting > 0) result = 1;
+    semaphore_lock(read_write_smp_id, W);
+    semaphore_unlock(read_write_smp_id, SP);
+    semaphore_unlock(read_write_smp_id, W);
+    return result;
 }
 
 int main() {
@@ -230,8 +257,7 @@ int main() {
     station_shm->track_status = 0;
 
     while(1) {
-        sleep(1);
-        if (station_shm->passengers_waiting > 0 && station_shm->track_status == 0) {
+        if (check_for_passengers() && station_shm->track_status == 0) {
             call_train();
             wait_for_train_departure();
 
