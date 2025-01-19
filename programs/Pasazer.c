@@ -12,13 +12,13 @@
 #include <time.h>
 #include "Funkcje.h"
 
-int sem_psg_num_id; //semafor określa aktualną liczbe pasażerów na peronie
-
-
 typedef struct{
     int place; // 1 - peron, 0 - pociag
     int type; // 1 pasazer z bagazem, 0 - pasazer z rowerem
 } passenger;
+
+station *station_shm;
+int station_shm_id;
 
 int random_type() {
     static int initialized = 0;
@@ -33,12 +33,19 @@ int main() {
     passenger p;
     p.place = 1;
     p.type = random_type();
-    sem_psg_num_id = passenger_num_semaphor();
-    semaphor_up(sem_psg_num_id, 0);
-    printf("Pasazer o numerze PID = %d wszedl na peron\n", getpid());
+
+    station_shm_id = get_station_shm();
+    station_shm = attach_station(station_shm_id);
+
+    station_shm->passengers_waiting++;
+
+
+
+    //printf("Pasazer o numerze PID = %d wszedl na peron\n", getpid());
     sleep(4);
     while(1) {
       pause();
     }
-    semaphor_down(sem_psg_num_id, 0);
+    station_shm->passengers_waiting--;
+
 }

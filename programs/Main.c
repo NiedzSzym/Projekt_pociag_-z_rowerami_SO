@@ -37,7 +37,7 @@ void * waves_generator() {
             sleep(delay);
             int wave;
             wave = rand() % (MAX_AMOUNT_OF_PASSENGERS - MIN_AMOUNT_OF_PASSENGERS + 1) + MIN_AMOUNT_OF_PASSENGERS;
-            printf("%d\n", wave);
+            //printf("%d\n", wave);
             for (int i = 0; i < wave; i++) {
                 usleep(50000);
                 generate_passenger();
