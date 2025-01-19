@@ -13,15 +13,53 @@
 #include <pthread.h>
 #include "Funkcje.h"
 
+#define MAX_AMOUNT_OF_PASSENGERS 15 //maksymalna liczba pasazerow w jednej fali
+#define MIN_AMOUNT_OF_PASSENGERS 1 //minimalna liczba pasazerow w jednej fali
+
+
 int train_que_id;
 int trains_shm_id;
 int station_shm_id;
-int train_id_on_station;
+
+
 int communication_que_id;
+int station_smp_id;
 
 train *trains_shm;
 station *station_shm;
+
+void generate_passenger() {
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("Błąd podczas tworzenia procesu:");
+        exit(EXIT_FAILURE);
+    } else if (pid == 0) { // Proces dziecka
+        execlp("./Pasazer", "Pasazer", NULL);
+        perror("execlp");
+        exit(EXIT_FAILURE);
+    }
+
+}
+
+void * waves_generator() {
+    while (1) {
+        int delay = rand() % 10;
+        while (1) {
+            sleep(delay);
+            int wave;
+            wave = rand() % (MAX_AMOUNT_OF_PASSENGERS - MIN_AMOUNT_OF_PASSENGERS + 1) + MIN_AMOUNT_OF_PASSENGERS;
+            //printf("%d\n", wave);
+            for (int i = 0; i < wave; i++) {
+                usleep(50000);
+                generate_passenger();
+            }
+        }
+    }
+
+}
+
 void cleanup(int signum) {
+
     if ( msgctl(train_que_id,IPC_RMID,0)==-1 )
     {
         perror("train_que");
@@ -32,6 +70,7 @@ void cleanup(int signum) {
         perror("communication_que");
         exit(EXIT_FAILURE);
     }
+    remove_semaphore(station_smp_id);
 	detach_trains_shm(trains_shm_id, trains_shm);
     detach_station_shm(station_shm_id, station_shm);
 
@@ -40,42 +79,61 @@ void cleanup(int signum) {
 
 void rcv_message_from_conductor() {
     communication msg;
-    if (msgrcv(communication_que_id, &msg, sizeof(msg.sender), 1, 0) == -1) {
-        perror("msgrcv failed");
+    if (msgrcv(communication_que_id, &msg, sizeof(msg.sender) + sizeof(msg.signal), 1, 0) == -1) {
+        perror("msgrcv failed_zawiadowca");
         exit(EXIT_FAILURE);
     }
-    printf("Zawiadowca stacji otrzymal wiadomosc o odjezdzie od konduktora o numerze PID: %d\n",msg.sender);
+
+    if (msg.signal == 2) {
+    	printf("Zawiadowca stacji otrzymal wiadomosc zwrotna od konduktora o numerze PID: %d\n",msg.sender);
+    }
+    else if (msg.signal == 1) {
+    	printf("Zawiadowca stacji otrzymal wiadomosc o odjezdzie od konduktora o numerze PID: %d\n",msg.sender);
+    }
+    else {
+    	printf("Nastapil blad komunikacji");
+        cleanup(0);
+        exit(EXIT_FAILURE);
+    }
 }
 
 
-void send_message_to_conductor(int pid_conductor) {
+void send_message_to_conductor(int signal) {
     communication msg;
-    msg.mtype = pid_conductor;
+    msg.mtype = station_shm->current_train.train_conductor_PID;
     msg.sender = getpid();
-    printf("Wysyłam wiadomość do kierownika pociągu o PID: %d\n", msg.mtype);
-    if (msgsnd(communication_que_id, &msg, sizeof(msg.sender), 0) == -1) {
-        perror("msgsnd failed");
+    msg.signal = signal;
+    if (msgsnd(communication_que_id, &msg, sizeof(msg.sender) + sizeof(msg.signal), 0) == -1) {
+        perror("msgsnd failed_zawiadowca");
         exit(EXIT_FAILURE);
     }
-
-    printf("Zawiadowca wysłał wiadomość do kierownika pociągu %d (PID: %d)\n", train_id_on_station, pid_conductor);
+	if (signal == 1) {
+    	printf("Zawiadowca wysłał wiadomość do kierownika pociągu %d (PID: %d), komunikat: ODJAZD\n", station_shm->current_train.train_id, station_shm->current_train.train_conductor_PID);
+    }
+    if (signal == 0) {
+      	printf("Zawiadowca wysłał wiadomość do kierownika pociągu %d (PID: %d), komunikat: PODJAZD\n", station_shm->current_train.train_id, station_shm->current_train.train_conductor_PID);
+    }
 }
 
 void call_train() {
     train_msg msg;
-
     if (msgrcv(train_que_id, &msg, sizeof(msg.train), msg.mtype, 0) == -1) {
             perror("Blad odbioru komunikatu z kolejki");
             exit(EXIT_FAILURE);
     }
-    train_id_on_station = msg.train.train_id;
-    send_message_to_conductor(msg.train.train_conductor_PID);
+
+    station_shm->current_train = msg.train;
+    printf("%d\n", station_shm->current_train.train_id);
+    send_message_to_conductor(0);
+    rcv_message_from_conductor();
     printf("KOMUNIKAT: Na peron wjedzie pociag numer %d\n", msg.train.train_id);
+    station_shm->track_status = 1;
 
 }
 
-void train_departure() {
-    printf("Pociag odjezdza ze stacji\n");
+void wait_for_train_departure() {
+    rcv_message_from_conductor();
+    printf("KOMUNIKAT: Pociag nr %d odjechal ze stacji\n", station_shm->current_train.train_id);
     station_shm->track_status = 0;
 }
 
@@ -117,7 +175,7 @@ void setup_trains(int number) {
             perror("msgsnd failed");
             exit(EXIT_FAILURE);
         }
-        printf("Wygenerowano pociag o id %d oraz kierownika %d\n",new_train.train_id, new_train.train_conductor_PID);
+        //printf("Wygenerowano pociag o id %d oraz kierownika %d\n",new_train.train_id, new_train.train_conductor_PID);
 
     }
 }
@@ -128,50 +186,60 @@ void setup_station() {
 
 }
 
-
-
-int main() {
-    int sem_num;
-    signal(SIGINT, cleanup);
-
-
-    train_que_id = get_trains_que();
+void IPC_setup() {
+	train_que_id = get_trains_que();
     communication_que_id = get_communication_que();
 
     trains_shm_id = get_trains_shm();
-    station_shm_id = get_station_shm();
-
-
     trains_shm = attach_trains(trains_shm_id);
+
+    station_shm_id = get_station_shm();
     station_shm = attach_station(station_shm_id);
 
+    station_smp_id = station_semaphore(1);
+}
+
+void SIGUSR1_handler() {
+	printf("SIGUSR1\n");
+}
+
+void SIGUSR2_handler() {
+	printf("SIGUSR2\n");
+}
+
+int main() {
+    signal(SIGINT, cleanup);
+    signal(SIGUSR1, SIGUSR1_handler);
+    signal(SIGUSR2, SIGUSR2_handler);
+    IPC_setup();
+
+    pthread_t generate_passenger_thread;
+    srand(time(NULL));
+    if (pthread_create(&generate_passenger_thread, NULL, waves_generator, NULL) != 0) {
+        perror("pthread_create");
+        exit(EXIT_FAILURE);
+    }
+
     setup_station();
-    sleep(1);
 
 
 //    while(1) {
 //        sleep(4);
-//        printf("Liczba pasazerow na stacji: %d\n", station_shm->passengers_waiting);
+//
 //    }
+    station_shm->track_status = 0;
 
     while(1) {
+        sleep(1);
         if (station_shm->passengers_waiting > 0 && station_shm->track_status == 0) {
             call_train();
-            rcv_message_from_conductor();
-            train_departure();
+            wait_for_train_departure();
+
         }
     }
-//    printf("Trains initialized in shared memory:\n");
-//    for (int i = 0; i < TRAIN_AMOUNT; i++) {
-//        printf("Pociag %d: ID=%d, Status=%d, PID kierownika=%d\n",
-//               i, trains_shm[i].train_id, trains_shm[i].train_status, trains_shm[i].train_conductor_PID);
-//    }
-    for (int i = 0; i < TRAIN_AMOUNT; i++) {
-    	waitpid(trains_shm[i].train_conductor_PID, NULL, 0);
-	}
-    sleep(5);
+
+    pthread_join(generate_passenger_thread, NULL);
     cleanup(0);
-    sleep(1);
 
 
 

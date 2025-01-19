@@ -5,7 +5,7 @@ CC = gcc
 CFLAGS = -Wall -Wextra -std=c11
 
 # Source files
-SRC = Main.c Pasazer.c Kierownik_pociagu.c Zawiadowca_stacji.c
+SRC = Pasazer.c Kierownik_pociagu.c Zawiadowca_stacji.c
 
 # Headers
 HEADERS = Funkcje.h

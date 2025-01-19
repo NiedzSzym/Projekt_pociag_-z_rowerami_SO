@@ -12,12 +12,12 @@
 #include <time.h>
 #include <sys/time.h>
 
-#define TRAIN_AMOUNT 5 //liczba pociagow na stacji
+#define TRAIN_AMOUNT 3 //liczba pociagow na stacji
 #define BIKE_SEATS 10 //liczba miejsc dla pasazerow z rowerem
 #define BAGGAGE_SEATS 10 //liczba miejsc dla pasazerow z bagazem
-#define STOP_TIME 1 //czas postoju w sekundach
-#define RETURN_TIME 3 //czas powrotu pociagu na stacje w sekundach
-#define SMP_PASSENGERS_NUMBER_ID 11
+#define STOP_TIME 10 //czas postoju w sekundach
+#define RETURN_TIME 10 //czas powrotu pociagu na stacje w sekundach
+#define SMP_STATION_ID 11
 #define SMP_TRAIN_ENTRIES_ID 12
 #define SMP_TRACK_STATUS_ID 13
 #define MSG_QUE_TRAINS_ID 21
@@ -28,10 +28,12 @@
 
 
 typedef struct {
-    int train_status; // 1 - na peronie, 0 - czeka na stacji, 2 - w drodze
     int train_id;
-    int baggage_seats_left;
-    int bike_seats_left;
+    int train_status; // 1 - na peronie, 0 - czeka na stacji, 2 - w drodze
+    int seats_left;
+    int bike_space_left;
+    int normal_entry; // 1 - otwarte, 0 - zamkniete
+    int bike_entry; // 1 - otwarte, 0 - zamkniete
     pid_t train_conductor_PID;
 } train;
 
@@ -44,31 +46,44 @@ typedef struct {
 	long mtype;
     int track_status; // 1 - zajety, 0 - wolny
     int passengers_waiting;
+    train current_train;
 } station;
 
 typedef struct {
     long mtype;
     long sender;
+    int signal; //1 - odjazd, 0 - podjazd, 2 - otrzymano wiadomosc
 } communication;
 
+void remove_semaphore(int sem_id) {
+    if (semctl(sem_id, 0, IPC_RMID) == -1) {
+        perror("semctl IPC_RMID failed");
+        exit(EXIT_FAILURE);
+    }
+}
 
-int passenger_num_semaphor() {
-	key_t key = ftok("/tmp", SMP_PASSENGERS_NUMBER_ID);
+int station_semaphore(int initial_value) {
+   key_t key = ftok("/tmp", SMP_STATION_ID);
 	if (key == -1) {
 	    perror("ftok");
 		exit(EXIT_FAILURE);
   	}
-
-	int sem_id = semget(key, 1, IPC_CREAT | 0622);
+    int sem_id = semget(key, 1, IPC_CREAT | 0622);
   	if (sem_id == -1) {
-	    perror("semget_passenger_number");
+	    perror("semget_train_entries");
     	exit(EXIT_FAILURE);
   	}
+    if (semctl(sem_id, 0, SETVAL, initial_value) == -1) {
+        perror("semctl SETVAL failed");
+        exit(EXIT_FAILURE);
+    }
+    return sem_id;
 
-  	return sem_id;
 }
 
-int entries_semaphors() {
+
+
+int entries_semaphores(int initial_value) {
 	key_t key = ftok("/tmp", SMP_TRAIN_ENTRIES_ID);
 	if (key == -1) {
 	    perror("ftok");
@@ -80,7 +95,14 @@ int entries_semaphors() {
 	    perror("semget_train_entries");
     	exit(EXIT_FAILURE);
   	}
-
+    if (semctl(sem_id, 0, SETVAL, initial_value) == -1) {
+        perror("semctl SETVAL failed");
+        exit(EXIT_FAILURE);
+    }
+    if (semctl(sem_id, 1, SETVAL, initial_value) == -1) {
+        perror("semctl SETVAL failed");
+        exit(EXIT_FAILURE);
+    }
   	return sem_id;
 }
 
@@ -100,7 +122,7 @@ int track_status_semaphor() {
   	return sem_id;
 }
 
-void semaphor_down(int sem_id, int sem_num) {
+void semaphor_lock(int sem_id, int sem_num) {
   	struct sembuf buffer = {sem_num, -1, 0};
   	if (semop(sem_id, &buffer, 1) == -1) {
 	    perror("semop");
@@ -108,7 +130,7 @@ void semaphor_down(int sem_id, int sem_num) {
   	}
 }
 
-void semaphor_up(int sem_id, int sem_num) {
+void semaphor_unlock(int sem_id, int sem_num) {
   	struct sembuf buffer = {sem_num, 1, 0};
   	if (semop(sem_id, &buffer, 1) == -1) {
 	    perror("semop");

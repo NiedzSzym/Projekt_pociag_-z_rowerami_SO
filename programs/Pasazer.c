@@ -12,13 +12,18 @@
 #include <time.h>
 #include "Funkcje.h"
 
+#define BIKE_ENTRY 1
+#define NORMAL_ENTRY 0
+
 typedef struct{
     int place; // 1 - peron, 0 - pociag
-    int type; // 1 pasazer z bagazem, 0 - pasazer z rowerem
+    int bike; // 1 pasazer z rowerem, 0 - pasazer bez rowera
 } passenger;
 
 station *station_shm;
 int station_shm_id;
+int station_smp_id;
+int entries_smp_id;
 
 int random_type() {
     static int initialized = 0;
@@ -27,24 +32,29 @@ int random_type() {
         initialized = 1;
     }
     int random_number = rand() % 100;
-    return (random_number < 75) ? 1 : 0;
+    return (random_number < 25) ? 1 : 0;
 }
 int main() {
     passenger p;
     p.place = 1;
-    p.type = random_type();
+    p.bike = random_type();//25% szansy na to ze pasazer bedzie mial rower
 
     station_shm_id = get_station_shm();
     station_shm = attach_station(station_shm_id);
+    station_smp_id = station_semaphore(1);
+    entries_smp_id = entries_semaphores(1);
 
+    //inkrementowanie liczby pasazerow na stacji
+    semaphor_lock(station_smp_id, 0);
     station_shm->passengers_waiting++;
+    semaphor_unlock(station_smp_id, 0);
+    //printf("%d\n", station_shm->passengers_waiting);
 
 
 
-    //printf("Pasazer o numerze PID = %d wszedl na peron\n", getpid());
-    sleep(4);
+
     while(1) {
-      pause();
+      sleep(1);
     }
     station_shm->passengers_waiting--;
 
